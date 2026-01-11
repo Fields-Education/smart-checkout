@@ -1,0 +1,99 @@
+name: Test Action
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test-self:
+    name: Test on self
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout action repo
+        uses: actions/checkout@v4
+
+      - name: Test smart-checkout on self
+        id: smart-checkout
+        uses: ./
+
+      - name: Verify outputs
+        run: |
+          echo "fetch-depth: ${{ steps.smart-checkout.outputs.fetch-depth }}"
+          echo "commits-since-release: ${{ steps.smart-checkout.outputs.commits-since-release }}"
+          echo "last-release-tag: ${{ steps.smart-checkout.outputs.last-release-tag }}"
+          echo "ref: ${{ steps.smart-checkout.outputs.ref }}"
+          echo "commit: ${{ steps.smart-checkout.outputs.commit }}"
+
+      - name: Verify git history available
+        run: |
+          git log --oneline -10
+          git describe --tags --always || echo "No tags found"
+
+  test-explicit-depth:
+    name: Test explicit depth
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout action repo
+        uses: actions/checkout@v4
+
+      - name: Test with explicit fetch-depth
+        id: smart-checkout
+        uses: ./
+        with:
+          fetch-depth: "50"
+
+      - name: Verify depth was used
+        run: |
+          DEPTH="${{ steps.smart-checkout.outputs.fetch-depth }}"
+          if [[ "$DEPTH" != "50" ]]; then
+            echo "Expected depth=50, got depth=$DEPTH"
+            exit 1
+          fi
+          echo "Correct: depth=$DEPTH"
+
+  test-full-clone:
+    name: Test full clone
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout action repo
+        uses: actions/checkout@v4
+
+      - name: Test with fetch-depth 0
+        id: smart-checkout
+        uses: ./
+        with:
+          fetch-depth: "0"
+
+      - name: Verify full clone
+        run: |
+          DEPTH="${{ steps.smart-checkout.outputs.fetch-depth }}"
+          if [[ "$DEPTH" != "0" ]]; then
+            echo "Expected depth=0, got depth=$DEPTH"
+            exit 1
+          fi
+          COMMIT_COUNT=$(git rev-list --count HEAD)
+          echo "Full history available: $COMMIT_COUNT commits"
+
+  test-public-repo:
+    name: Test on public repo with releases
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout action repo
+        uses: actions/checkout@v4
+
+      - name: Test on actions/checkout (has releases)
+        id: smart-checkout
+        uses: ./
+        with:
+          repository: actions/checkout
+          path: test-repo
+
+      - name: Show results
+        run: |
+          echo "fetch-depth: ${{ steps.smart-checkout.outputs.fetch-depth }}"
+          echo "commits-since-release: ${{ steps.smart-checkout.outputs.commits-since-release }}"
+          echo "last-release-tag: ${{ steps.smart-checkout.outputs.last-release-tag }}"
+          ls -la test-repo/
+          cd test-repo && git log --oneline -5

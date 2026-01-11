@@ -1,0 +1,195 @@
+name: Smart Checkout
+description: |
+  Checkout with automatic fetch-depth calculation based on commits since last release.
+  Wraps actions/checkout with all the same inputs, plus smart depth calculation.
+
+author: 'Fields'
+branding:
+  icon: 'git-branch'
+  color: 'blue'
+
+inputs:
+  # Smart checkout specific
+  fetch-depth:
+    description: |
+      Override fetch depth. Use 'auto' to calculate from last release (default),
+      '0' for full clone, or a specific number.
+    required: false
+    default: "auto"
+
+  # Pass-through inputs from actions/checkout
+  repository:
+    description: Repository name with owner (e.g., actions/checkout)
+    default: ${{ github.repository }}
+  ref:
+    description: The branch, tag or SHA to checkout
+    default: ""
+  token:
+    description: PAT or GITHUB_TOKEN for fetching the repository
+    default: ${{ github.token }}
+  ssh-key:
+    description: SSH key for fetching the repository
+    default: ""
+  ssh-known-hosts:
+    description: Known hosts in addition to the user and global host key database
+    default: ""
+  ssh-strict:
+    description: Whether to perform strict host key checking
+    default: "true"
+  ssh-user:
+    description: The user to use when connecting to the remote SSH host
+    default: git
+  persist-credentials:
+    description: Whether to configure the token or SSH key with the local git config
+    default: "true"
+  path:
+    description: Relative path under $GITHUB_WORKSPACE to place the repository
+    default: ""
+  clean:
+    description: Whether to execute git clean -ffdx && git reset --hard HEAD before fetching
+    default: "true"
+  filter:
+    description: Partially clone against a given filter (overrides sparse-checkout if set)
+    default: ""
+  sparse-checkout:
+    description: Do a sparse checkout on given patterns (newline separated)
+    default: ""
+  sparse-checkout-cone-mode:
+    description: Whether to use cone-mode when doing a sparse checkout
+    default: "true"
+  fetch-tags:
+    description: Whether to fetch tags, even if fetch-depth > 0
+    default: "true"
+  show-progress:
+    description: Whether to show progress status output when fetching
+    default: "true"
+  lfs:
+    description: Whether to download Git-LFS files
+    default: "false"
+  submodules:
+    description: Whether to checkout submodules (true, false, or recursive)
+    default: "false"
+  set-safe-directory:
+    description: Add repository path as safe.directory for Git global config
+    default: "true"
+  github-server-url:
+    description: The base URL for the GitHub instance to clone from
+    default: ""
+
+outputs:
+  # Smart checkout outputs
+  fetch-depth:
+    description: The fetch depth that was used
+    value: ${{ steps.calculate.outputs.depth }}
+  commits-since-release:
+    description: Number of commits since last release (empty if no release)
+    value: ${{ steps.calculate.outputs.commits }}
+  last-release-tag:
+    description: The last release tag used for calculation (empty if none)
+    value: ${{ steps.calculate.outputs.tag }}
+  # Pass-through outputs from actions/checkout
+  ref:
+    description: The branch, tag or SHA that was checked out
+    value: ${{ steps.checkout.outputs.ref }}
+  commit:
+    description: The commit SHA that was checked out
+    value: ${{ steps.checkout.outputs.commit }}
+
+runs:
+  using: composite
+  steps:
+    - name: Calculate fetch depth
+      id: calculate
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.token }}
+        INPUT_DEPTH: ${{ inputs.fetch-depth }}
+        INPUT_REPOSITORY: ${{ inputs.repository }}
+        INPUT_REF: ${{ inputs.ref }}
+        GITHUB_SHA: ${{ github.sha }}
+      run: |
+        BUFFER=10
+
+        if [[ "$INPUT_DEPTH" != "auto" ]]; then
+          echo "depth=$INPUT_DEPTH" >> "$GITHUB_OUTPUT"
+          echo "::notice::Using provided fetch-depth: $INPUT_DEPTH"
+          exit 0
+        fi
+
+        LAST_TAG=$(gh release view --repo "$INPUT_REPOSITORY" --json tagName -q '.tagName' 2>/dev/null || echo "")
+
+        if [[ -z "$LAST_TAG" ]]; then
+          echo "::notice::No releases found, using full clone (depth=0)"
+          echo "depth=0" >> "$GITHUB_OUTPUT"
+          echo "commits=" >> "$GITHUB_OUTPUT"
+          echo "tag=" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        echo "tag=$LAST_TAG" >> "$GITHUB_OUTPUT"
+
+        TARGET_REF="${INPUT_REF:-$GITHUB_SHA}"
+        COMPARE_RESULT=$(gh api "repos/${INPUT_REPOSITORY}/compare/${LAST_TAG}...${TARGET_REF}" \
+          --jq '{ahead: .ahead_by, behind: .behind_by, status: .status}' 2>/dev/null || echo "")
+
+        if [[ -z "$COMPARE_RESULT" || "$COMPARE_RESULT" == "null" ]]; then
+          echo "::warning::Failed to get commit count from API, using full clone"
+          echo "depth=0" >> "$GITHUB_OUTPUT"
+          echo "commits=" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        AHEAD=$(echo "$COMPARE_RESULT" | jq -r '.ahead // 0')
+        BEHIND=$(echo "$COMPARE_RESULT" | jq -r '.behind // 0')
+        STATUS=$(echo "$COMPARE_RESULT" | jq -r '.status // "unknown"')
+
+        if [[ "$STATUS" == "diverged" ]]; then
+          COMMITS=$((AHEAD + BEHIND))
+          echo "::notice::History diverged from $LAST_TAG (ahead: $AHEAD, behind: $BEHIND)"
+        else
+          COMMITS="$AHEAD"
+        fi
+
+        echo "commits=$COMMITS" >> "$GITHUB_OUTPUT"
+
+        DEPTH=$((COMMITS + BUFFER))
+
+        if [[ "$DEPTH" -le "$BUFFER" ]]; then
+          echo "::notice::Calculated depth=$DEPTH, using full clone instead"
+          echo "depth=0" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        echo "::notice::Calculated fetch-depth: $DEPTH ($COMMITS commits since $LAST_TAG, +$BUFFER buffer)"
+        echo "depth=$DEPTH" >> "$GITHUB_OUTPUT"
+
+    - name: Checkout repository
+      id: checkout
+      uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+      with:
+        repository: ${{ inputs.repository }}
+        ref: ${{ inputs.ref }}
+        token: ${{ inputs.token }}
+        ssh-key: ${{ inputs.ssh-key }}
+        ssh-known-hosts: ${{ inputs.ssh-known-hosts }}
+        ssh-strict: ${{ inputs.ssh-strict }}
+        ssh-user: ${{ inputs.ssh-user }}
+        persist-credentials: ${{ inputs.persist-credentials }}
+        path: ${{ inputs.path }}
+        clean: ${{ inputs.clean }}
+        filter: ${{ inputs.filter }}
+        sparse-checkout: ${{ inputs.sparse-checkout }}
+        sparse-checkout-cone-mode: ${{ inputs.sparse-checkout-cone-mode }}
+        fetch-depth: ${{ steps.calculate.outputs.depth }}
+        fetch-tags: ${{ inputs.fetch-tags }}
+        show-progress: ${{ inputs.show-progress }}
+        lfs: ${{ inputs.lfs }}
+        submodules: ${{ inputs.submodules }}
+        set-safe-directory: ${{ inputs.set-safe-directory }}
+        github-server-url: ${{ inputs.github-server-url }}
+
+    - name: Fetch tags explicitly
+      if: steps.calculate.outputs.depth != '0' && inputs.fetch-tags == 'true'
+      shell: bash
+      working-directory: ${{ inputs.path || '.' }}
+      run: git fetch --tags --force 2>/dev/null || true
