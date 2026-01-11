@@ -4,24 +4,32 @@
     "config:recommended",
     "helpers:pinGitHubActionDigests"
   ],
-  "labels": ["dependencies"],
+  "labels": [
+    "dependencies"
+  ],
   "prHourlyLimit": 4,
   "prConcurrentLimit": 10,
   "packageRules": [
     {
       "description": "Group GitHub Actions updates",
-      "matchManagers": ["github-actions"],
+      "matchManagers": [
+        "github-actions"
+      ],
       "groupName": "github-actions",
       "automerge": true,
       "automergeType": "pr",
-      "schedule": ["before 6am on monday"]
+      "schedule": [
+        "before 6am on monday"
+      ]
     }
   ],
   "customManagers": [
     {
       "description": "Update pinned action SHA in action.yml",
       "customType": "regex",
-      "fileMatch": ["^action\\.ya?ml$"],
+      "managerFilePatterns": [
+        "/^action\\.ya?ml$/"
+      ],
       "matchStrings": [
         "uses:\\s+(?<depName>[^@]+)@(?<currentDigest>[a-f0-9]{40})\\s+#\\s*(?<currentValue>v[\\d.]+)"
       ],
