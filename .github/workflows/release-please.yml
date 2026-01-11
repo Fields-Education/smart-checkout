@@ -21,7 +21,7 @@ jobs:
     steps:
       - name: Run release-please
         id: release
-        uses: googleapis/release-please-action@a37ac6e4f6449ce8b3f7607e4d97d0146028dc0b # v4.1.4
+        uses: googleapis/release-please-action@16a9c90856f42705d54a6fda1823352bdc62cf38 # v4.4.0
         with:
           release-type: simple
           token: ${{ secrets.GITHUB_TOKEN }}
